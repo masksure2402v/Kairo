@@ -1,42 +1,44 @@
-# agent.py  python agent.py console
+from livekit.agents import (
+    Agent,
+    AgentSession,
+    JobContext,
+    RunContext,
+    WorkerOptions,
+    cli,
+    function_tool,
+)
+from livekit.plugins import groq, silero
+
 from dotenv import load_dotenv
-from livekit import agents
-from livekit.agents import AgentSession, Agent, RoomInputOptions
-from livekit.plugins import google, noise_cancellation
-from Jarvis_prompts import behavior_prompts, Reply_prompts
 
 load_dotenv()
 
-# tiny prompts (swap for Jarvis_prompts import if you have that file)
+@function_tool
+async def lookup_weather(
+    context: RunContext,
+    location: str,
+):
+    """Used to look up weather information."""
 
-class Assistant(Agent):
-    def __init__(self) -> None:
-        super().__init__(instructions=behavior_prompts)
+    return {"weather": "sunny", "temperature": 70}
 
-async def entrypoint(ctx: agents.JobContext):
-    # Direct, minimal RealtimeModel usage (assumes plugin API matches)
-    session = AgentSession(
-        llm=google.beta.realtime.RealtimeModel(voice="Charon")
-    )
 
-    # Start session with noise cancellation and video enabled
-    await session.start(
-        room=ctx.room,
-        agent=Assistant(),
-        room_input_options=RoomInputOptions(
-            noise_cancellation=noise_cancellation.BVC(),
-            video_enabled=True
-        ),
-    )
-
-    # make sure we are connected to LiveKit control plane
+async def entrypoint(ctx: JobContext):
     await ctx.connect()
+    
+    agent = Agent(
+        instructions="""You are a friendly voice assistant. Start every conversation by greeting the user. Only use the `lookup_weather` tool if the user specifically asks for weather information. Never assume a location or provide weather data without a request.""",
+        tools=[],
+    )
+    session = AgentSession(
+        vad=silero.VAD.load(),
+        stt=groq.STT(model="whisper-large-v3-turbo"),
+        llm=groq.LLM(model="llama-3.3-70b-versatile"),
+        tts=groq.TTS(model="playai-tts", voice="Arista-PlayAI"),
+    )
 
-    # Send greeting
-    await session.generate_reply(instructions=Reply_prompts)
-
-    # keep running until session ends
-    await session.wait_closed()
+    await session.start(agent=agent, room=ctx.room)
+    await session.generate_reply(instructions="Say hello, then ask the user how their day is going and how you can help.")
 
 if __name__ == "__main__":
-    agents.cli.run_app(agents.WorkerOptions(entrypoint_fnc=entrypoint))
+    cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint))
